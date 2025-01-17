@@ -5,9 +5,10 @@ from workalendar.america import Brazil
 from pandas.tseries.offsets import BDay
 from datetime import datetime
 import numpy as np
+import matplotlib.pyplot as plt
 
 #Definição de data da curva do DI a ser extraída:
-data = "07/01/2025"
+data = "15/01/2025"
 
 #Scrap dos dados da B3:
 url = f"https://www2.bmf.com.br/pages/portal/bmfbovespa/lumis/lum-ajustes-do-pregao-ptBR.asp?dData1={data}"
@@ -113,7 +114,7 @@ outras_colunas = [col for col in tabela_3.columns if col != coluna_destaque]
 nova_ordem = [coluna_destaque] + outras_colunas
 tabela_3 = tabela_3[nova_ordem]
 
-#Adicionando datas do Copom:
+#Definindo datas do Copom:
 datas_copom = pd.DataFrame({
     "Datas": pd.to_datetime([
         "29-01-2025",
@@ -127,6 +128,7 @@ datas_copom = pd.DataFrame({
     ], dayfirst=True)
 })
 
+#Inserindo datas do Copom no DataFrame
 tabela_4 = pd.concat([tabela_3, datas_copom], ignore_index=True)
 tabela_4["Datas"] = pd.to_datetime(tabela_4["Datas"], dayfirst=True)
 tabela_5 = tabela_4.fillna({"Eventos": "Copom"})
@@ -134,7 +136,7 @@ tabela_5 = tabela_4.fillna({"Eventos": "Copom"})
 #Cálculo de NDU:
 data_fixa = pd.to_datetime(data, dayfirst=True)
 
-#Definindo a função get_working_days_delta, que vai efetivamente calcular os NDU:
+#Definindo as funções get_working_days_delta e calcular_dias_uteis, que vai efetivamente calcular os NDU:
 def get_working_days_delta(start_date, end_date, holidays=None):
     start_date = pd.to_datetime(start_date)
     end_date = pd.to_datetime(end_date)
@@ -156,7 +158,7 @@ def calcular_dias_uteis(data_fixa, data_referencia):
 # Aplicar a função ao DataFrame
 tabela_5['NDU'] = tabela_5['Datas'].apply(lambda data_referencia: calcular_dias_uteis(data_fixa, data_referencia))
 
-#Definição de taxa de fechamento
+#Definição de taxa de fechamento a partir do ajuste de fechamento:
 tabela_5['PU de Ajuste'] = tabela_5['PU de Ajuste'].str.replace('.', '', regex=True)  # Remove pontos (milhares)
 tabela_5['PU de Ajuste'] = tabela_5['PU de Ajuste'].str.replace(',', '.', regex=True)  # Substitui vírgula por ponto
 tabela_5['PU de Ajuste'] = pd.to_numeric(tabela_5['PU de Ajuste'])
@@ -169,27 +171,21 @@ tabela_5.loc[len(tabela_5)] = [data_fixa, "Selic Over Hoje", 1, taxa_selic_over]
 tabela_5 = tabela_5.reset_index(drop=False)
 tabela_5 = tabela_5.drop(columns=["index"])
 tabela_5.sort_values(by="Datas", ascending = True, inplace = True)
-
-#Calculando a taxa interpolada nos dias de Copom
 tabela_5 = tabela_5.reset_index(drop=False)
 tabela_5 = tabela_5.drop(columns=["index"])
 
+#Calculando a taxa interpolada nos dias de Copom
 tabela_5["Taxa de fechamento"] = tabela_5["Taxa de fechamento"].fillna(0)
 indices_interpolacao = tabela_5.index[tabela_5["Taxa de fechamento"].eq(0)].tolist()
-indices_taxas_anteriores = [x - 1 for x in indices_interpolacao]
-indices_taxas_posteriores = [x + 1 for x in indices_interpolacao]
 
-taxa_anterior = tabela_5.loc[indices_taxas_anteriores, "Taxa de fechamento"]
-taxa_posterior = tabela_5.loc[indices_taxas_posteriores, "Taxa de fechamento"]
+#Função para calcular a taxa interpolada nos dias de reunião do Copom. A interpolação usada foi a Flat Forward 252
+def taxa_interpolada(dataframe, indices, coluna):
+    for indices_interpolados in indices:
+        taxa = (pow(pow((1 + tabela_5.loc[indices_interpolados - 1, "Taxa de fechamento"]/100),(tabela_5.loc[indices_interpolados - 1, "NDU"]/252))*pow(pow((1+tabela_5.loc[indices_interpolados + 1, "Taxa de fechamento"]/100),(tabela_5.loc[indices_interpolados + 1, "NDU"]/252))/pow((1+tabela_5.loc[indices_interpolados - 1, "Taxa de fechamento"]/100),(tabela_5.loc[indices_interpolados - 1, "NDU"]/252)),((tabela_5.loc[indices_interpolados, "NDU"]-tabela_5.loc[indices_interpolados - 1, "NDU"])/(tabela_5.loc[indices_interpolados + 1, "NDU"]-tabela_5.loc[indices_interpolados - 1, "NDU"]))),(252/tabela_5.loc[indices_interpolados, "NDU"]))-1)*100
+        dataframe.loc[indices_interpolados, coluna] = taxa
+    return dataframe
 
-NDU_anterior = tabela_5.loc[indices_taxas_anteriores, "NDU"]
-NDU_posterior = tabela_5.loc[indices_taxas_posteriores, "NDU"]
-NDU_hoje = tabela_5.loc[indices_interpolacao, "NDU"]
-
-for (indices,taxaTMenos1,taxaTMais1,NDUMenos1,NDUMais1,NDUHoje) in zip(indices_interpolacao,taxa_anterior,taxa_posterior,NDU_anterior,NDU_posterior,NDU_hoje):
-    taxa_interpolada = (pow(pow((1+taxaTMenos1/100),(NDUMenos1/252))*pow(pow((1+taxaTMais1/100),(NDUMais1/252))/pow((1+taxaTMenos1/100),(NDUMenos1/252)),((NDUHoje-NDUMenos1)/(NDUMais1-NDUMenos1))),(252/NDUHoje))-1)*100
-    tabela_5.loc[indices, "Taxa de fechamento"] = taxa_interpolada
-
+tabela_5 = taxa_interpolada(tabela_5, indices_interpolacao, "Taxa de fechamento")
 tabela_5 = tabela_5.sort_values(by="Datas").reset_index(drop=True)
 
 #Definição das taxas a termo da curva:
@@ -207,14 +203,42 @@ def variacao_termo(linha):
     return round((tabela_5.loc[linha.name, "Taxa termo"] - tabela_5.loc[linha.name - 1, "Taxa termo"])*100,2)
 
 tabela_5["Variacao termo"] = tabela_5.apply(variacao_termo, axis=1)
-
+ 
 #Criacao da precificacao consolidada por reuniao do Copom:
 
-# Criar grupos com base nas linhas onde "Copom" aparece
+#Criar grupos com base nas linhas onde "Copom" aparece
 tabela_5['Grupo'] = (tabela_5['Eventos'] == 'Copom').cumsum()
 
 # Calcular a soma somente entre as linhas dentro de cada grupo
 tabela_5['Precificacao Copom'] = tabela_5.groupby('Grupo')['Variacao termo'].transform('sum')
 
-# Exibir o resultado
-print(tabela_5)
+#Criação de dashboard para CDIE
+bps_copom = tabela_5.loc[tabela_5['Eventos'] == "Copom", "Precificacao Copom"].tolist()
+bps_copom.pop(-1)
+ultimo_copom_index = tabela_5[tabela_5["Eventos"] == "Copom"].index[-1]
+ultimo_copom = tabela_5.loc[ultimo_copom_index, "Variacao termo"].tolist()
+bps_copom.extend([ultimo_copom])
+datas_copom_lista = tabela_5.loc[tabela_5['Eventos'] == "Copom", "Datas"].tolist()
+datas_copom_lista_formatada = [data.strftime("%b-%Y") for data in datas_copom_lista]
+
+#Criação a partir de um gráfico de barras
+fig, ax = plt.subplots()
+
+x = np.arange(len(datas_copom_lista_formatada))
+ax.bar(x, bps_copom, width=0.8, align='center', color='black')    
+plt.xticks(x, datas_copom_lista_formatada, fontsize=7.5)
+plt.yticks(np.arange(0, max(bps_copom) + 25, 25))
+ax = plt.gca()
+ax.spines['top'].set_visible(False)
+ax.spines['right'].set_visible(False)
+#Adicionar título principal
+plt.suptitle('CDIE', fontsize=16, fontweight='light', fontfamily='rockwell', x=0.135, y=0.9)
+
+#Adicionar subtítulo
+plt.title(f'COPOM Market Expectations, bps - Last: {data_fixa:%d-%m-%Y}', fontsize=12, fontweight='light', fontfamily='rockwell', x=0.36, y=1.05)
+
+#Ajustar layout para evitar sobreposição
+plt.tight_layout(rect=[0, 0, 1, 0.95])
+ax.legend()
+
+plt.show()
