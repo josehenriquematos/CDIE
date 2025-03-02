@@ -1,3 +1,12 @@
+''' 
+How to use "CDIE.py":
+
+It's pretty easy to use this code. First you need to set the reference date that you want to view the Copom market expectations to the "date"
+variable. After that, you should check if the Selic over rate is correct in the "selic_over_rate" variable (Note: the effective Selic rate is 
+approximately 10 bps below Selic target rate which is set by Banco Central do Brasil. For example, if Selic rate announced by BCB is 13.25%,
+the effective Selic rate or Selic over rate will be 13.15%). 
+
+'''
 import requests
 import pandas as pd
 from pandas.tseries.offsets import BMonthBegin
@@ -7,47 +16,48 @@ from datetime import datetime
 import numpy as np
 import matplotlib.pyplot as plt
 
-#Definição de data da curva do DI a ser extraída:
-data = "15/01/2025"
+# DI curve's date:
+date = "28/02/2025"
 
-#Scrap dos dados da B3:
-url = f"https://www2.bmf.com.br/pages/portal/bmfbovespa/lumis/lum-ajustes-do-pregao-ptBR.asp?dData1={data}"
-dados_DI = pd.read_html(requests.get(url).text)
-tabela = dados_DI[0]
+# B3 data scrap:
+url = f"https://www2.bmf.com.br/pages/portal/bmfbovespa/lumis/lum-ajustes-do-pregao-ptBR.asp?dData1={date}"
+DI_data = pd.read_html(requests.get(url).text)
+table = DI_data[0]
 
-#Extração somente das linhas de ajuste do DI
-inicio = tabela[tabela['Mercadoria'] == "DI1 - DI de 1 dia"].index[0]
-fim = tabela[tabela['Mercadoria'] == "DOL - Dólar comercial"].index[0]
-tabela.loc[inicio:fim, 'Mercadoria'] = tabela.loc[inicio:fim, 'Mercadoria'].fillna("DI1 - DI de 1 dia")
-tabela_2 = tabela[tabela['Mercadoria'] == "DI1 - DI de 1 dia"]
-tabela_3 = tabela_2.drop(columns = ['Mercadoria', 'Preço de ajuste anterior', 'Variação', 'Valor do ajuste por contrato (R$)'])
+# Extracting only the DI's adjustment rows:
+start = table[table['Mercadoria'] == "DI1 - DI de 1 dia"].index[0]
+end = table[table['Mercadoria'] == "DOL - Dólar comercial"].index[0]
+table.loc[start:end, 'Mercadoria'] = table.loc[start:end, 'Mercadoria'].fillna("DI1 - DI de 1 dia")
+table_2 = table[table['Mercadoria'] == "DI1 - DI de 1 dia"]
+table_3 = table_2.drop(columns = ['Mercadoria', 'Preço de ajuste anterior', 'Variação', 'Valor do ajuste por contrato (R$)'])
 
-#Puxando lista de feriados salva:
-with open("feriados_jhenriquematos.txt", "r") as arquivo:
-    lista_feriados = [linha.strip() for linha in arquivo]
+# Scraping saved holidays:
+with open("feriados_jhenriquematos.txt", "r") as archive:
+    holidays_list = [row.strip() for row in archive]
 
-#Conversão da lista de feriados para o formato datetime
-feriados_convertidos = [datetime.strptime(data, "%Y-%m-%d %H:%M:%S") for data in lista_feriados]
+# Convertion of holidays list to datetime type
+converted_holidays = [datetime.strptime(date, "%Y-%m-%d %H:%M:%S") for date in holidays_list]
 
-#Definição manual da função is_working_day(), para retirar de dias úteis os feriados:
+# Defining is_working_day() function to remove holidays in working days. Reason to create this is to help me get
+# the first working day of each DI settlement month:
 def is_working_day(date, holidays=None):
     if isinstance(date, str):
         date = datetime.strptime(date, "%Y-%m-%d")
     
-    # Verifica se é fim de semana
-    if date.weekday() >= 5:  # 5 = Sábado, 6 = Domingo
+    # Verify if it's weekend
+    if date.weekday() >= 5:  # 5 = Saturday, 6 = Sunday
         return False
     
-    # Verifica se é feriado, se uma lista de feriados for fornecida
+    # Verify if it's holiday given a holiday list
     if holidays and date in holidays:
         return False
     
     return True
     
-#Dataframes de datas para os contratos de DI
-def datas_DI(valor):
-    # Mapeamento da primeira letra para o número do mês
-    meses_aux = {
+# Dataframes with DI contract dates
+def DI_dates(value):
+    # Mapping the first letter to month's number
+    months_aux = {
     'F': 1,
     'G': 2,
     'H': 3, 
@@ -62,7 +72,7 @@ def datas_DI(valor):
     'Z': 12
     }
 
-    anos_aux = {
+    years_aux = {
     '23': 2023, 
     '24': 2024, 
     '25': 2025, 
@@ -88,35 +98,35 @@ def datas_DI(valor):
     '45': 2045
     }
 
-    primeira_letra = valor[0].upper()
-    ultimos_numeros = valor[1:]
+    first_letter = value[0].upper()
+    last_numbers = value[1:]
 
-    # Obter o mês e o ano correspondentes
-    mes = meses_aux.get(primeira_letra)
-    ano = anos_aux.get(ultimos_numeros)
+    # Getting corresponding month and year
+    month = months_aux.get(first_letter)
+    year = years_aux.get(last_numbers)
 
-    if mes and ano:
-        # Calcular o primeiro dia útil do mês e ano
-        primeiro_dia_util = pd.Timestamp(f'{ano}-{mes:02d}-01')
-        # Verificar se a data inicial é um dia útil e não é feriado
-        while not is_working_day(primeiro_dia_util, holidays=feriados_convertidos):
-            primeiro_dia_util += BDay(1)  # Avançar para o próximo dia útil
-        return primeiro_dia_util.date()
+    if month and year:
+        # Calculate the first working day of the month
+        first_working_day = pd.Timestamp(f'{year}-{month:02d}-01')
+        # Verify if the initial date is working day and isn't a holiday
+        while not is_working_day(first_working_day, holidays=converted_holidays):
+            first_working_day += BDay(1)  # Go to the next working day
+        return first_working_day.date()
     else:
-        return None  # Retorna None se algo estiver errado
+        return None  # Return None if something is wrong
 
-tabela_3 = tabela_3.rename(columns={"Vencimento": "Eventos", "Preço de ajuste Atual": "PU de Ajuste"})
-tabela_3["Datas"] = tabela_3['Eventos'].apply(datas_DI)
+table_3 = table_3.rename(columns={"Vencimento": "Events", "Preço de ajuste Atual": "Adjustment Price"})
+table_3["Dates"] = table_3['Events'].apply(DI_dates)
 
-#Nova ordem: Datas primeiro, seguido das outras colunas
-coluna_destaque = "Datas"
-outras_colunas = [col for col in tabela_3.columns if col != coluna_destaque]
-nova_ordem = [coluna_destaque] + outras_colunas
-tabela_3 = tabela_3[nova_ordem]
+# New order: Dates first, follow by other columns
+highlighted_column = "Dates"
+other_columns = [col for col in table_3.columns if col != highlighted_column]
+new_order = [highlighted_column] + other_columns
+table_3 = table_3[new_order]
 
-#Definindo datas do Copom:
-datas_copom = pd.DataFrame({
-    "Datas": pd.to_datetime([
+#Defining Copom dates:
+copom_dates = pd.DataFrame({
+    "Dates": pd.to_datetime([
         "29-01-2025",
         "19-03-2025",
         "07-05-2025",
@@ -128,15 +138,15 @@ datas_copom = pd.DataFrame({
     ], dayfirst=True)
 })
 
-#Inserindo datas do Copom no DataFrame
-tabela_4 = pd.concat([tabela_3, datas_copom], ignore_index=True)
-tabela_4["Datas"] = pd.to_datetime(tabela_4["Datas"], dayfirst=True)
-tabela_5 = tabela_4.fillna({"Eventos": "Copom"})
+# Putting Copom dates in Dataframe
+table_4 = pd.concat([table_3, copom_dates], ignore_index=True)
+table_4["Dates"] = pd.to_datetime(table_4["Dates"], dayfirst=True)
+table_5 = table_4.fillna({"Events": "Copom"})
 
-#Cálculo de NDU:
-data_fixa = pd.to_datetime(data, dayfirst=True)
+# Calculating NDU:
+fix_date = pd.to_datetime(date, dayfirst=True)
 
-#Definindo as funções get_working_days_delta e calcular_dias_uteis, que vai efetivamente calcular os NDU:
+# Defining get_working_days_delta and calculate_working_days that will effectivelly calculate the NDU:
 def get_working_days_delta(start_date, end_date, holidays=None):
     start_date = pd.to_datetime(start_date)
     end_date = pd.to_datetime(end_date)
@@ -147,97 +157,109 @@ def get_working_days_delta(start_date, end_date, holidays=None):
         working_days = [day for day in working_days if day not in holidays]
     return len(working_days)
 
-def calcular_dias_uteis(data_fixa, data_referencia):
-    # Converter as datas para o formato correto
-    data_fixa = pd.to_datetime(data_fixa, dayfirst=True)
-    data_referencia = pd.to_datetime(data_referencia, dayfirst=True)
-    # Lista de dias úteis entre as duas datas
-    dias_uteis = get_working_days_delta(data_fixa, data_referencia, holidays=feriados_convertidos)-1
-    return dias_uteis
+def calculate_working_days(fix_date, reference_date):
+    # Convert dates to the right format
+    fix_date = pd.to_datetime(fix_date, dayfirst=True)
+    reference_date = pd.to_datetime(reference_date, dayfirst=True)
+    # List of working days between two dates
+    working_days = get_working_days_delta(fix_date, reference_date, holidays=converted_holidays)-1
+    return working_days
 
-# Aplicar a função ao DataFrame
-tabela_5['NDU'] = tabela_5['Datas'].apply(lambda data_referencia: calcular_dias_uteis(data_fixa, data_referencia))
+# Apply the function in DataFrame
+table_5['NDU'] = table_5['Dates'].apply(lambda reference_date: calculate_working_days(fix_date, reference_date))
 
-#Definição de taxa de fechamento a partir do ajuste de fechamento:
-tabela_5['PU de Ajuste'] = tabela_5['PU de Ajuste'].str.replace('.', '', regex=True)  # Remove pontos (milhares)
-tabela_5['PU de Ajuste'] = tabela_5['PU de Ajuste'].str.replace(',', '.', regex=True)  # Substitui vírgula por ponto
-tabela_5['PU de Ajuste'] = pd.to_numeric(tabela_5['PU de Ajuste'])
-tabela_5["Taxa de fechamento"] = tabela_5.apply(lambda row: (pow((100000/row["PU de Ajuste"]),(252/row["NDU"])) - 1)*100, axis = 1)
-tabela_5 = tabela_5.drop(columns=["PU de Ajuste"])
+# Remove rows where the NDU column is negative. Reason: it's possible that you may want to check Copom market expectations in reference 
+# dates that some Copom meetings have already occured.
+removed_rows = table_5.index[table_5["NDU"].lt(0)].tolist()
+table_5 = table_5.drop(removed_rows)
+table_5 = table_5.sort_values(by="Dates").reset_index(drop=True)
 
-#Definição da Taxa Selic Over e inserção na curva:
-taxa_selic_over = 12.15
-tabela_5.loc[len(tabela_5)] = [data_fixa, "Selic Over Hoje", 1, taxa_selic_over]
-tabela_5 = tabela_5.reset_index(drop=False)
-tabela_5 = tabela_5.drop(columns=["index"])
-tabela_5.sort_values(by="Datas", ascending = True, inplace = True)
-tabela_5 = tabela_5.reset_index(drop=False)
-tabela_5 = tabela_5.drop(columns=["index"])
+# Defining closement rates based on closement adjusment:
+table_5['Adjustment Price'] = table_5['Adjustment Price'].str.replace('.', '', regex=True)  # Remove points
+table_5['Adjustment Price'] = table_5['Adjustment Price'].str.replace(',', '.', regex=True)  # Change commas to points
+table_5['Adjustment Price'] = pd.to_numeric(table_5['Adjustment Price'])
+table_5["Closement rates"] = table_5.apply(lambda row: (pow((100000/row["Adjustment Price"]),(252/row["NDU"])) - 1)*100, axis = 1)
+table_5 = table_5.drop(columns=["Adjustment Price"])
 
-#Calculando a taxa interpolada nos dias de Copom
-tabela_5["Taxa de fechamento"] = tabela_5["Taxa de fechamento"].fillna(0)
-indices_interpolacao = tabela_5.index[tabela_5["Taxa de fechamento"].eq(0)].tolist()
+# Defining Selic Over Rate and it's insertion in curve:
+selic_over_rate = 13.15
+table_5.loc[len(table_5)] = [fix_date, "Selic Over Today", 1, selic_over_rate]
+table_5 = table_5.reset_index(drop=False)
+table_5 = table_5.drop(columns=["index"])
+table_5.sort_values(by="Dates", ascending = True, inplace = True)
+table_5 = table_5.reset_index(drop=False)
+table_5 = table_5.drop(columns=["index"])
 
-#Função para calcular a taxa interpolada nos dias de reunião do Copom. A interpolação usada foi a Flat Forward 252
-def taxa_interpolada(dataframe, indices, coluna):
-    for indices_interpolados in indices:
-        taxa = (pow(pow((1 + tabela_5.loc[indices_interpolados - 1, "Taxa de fechamento"]/100),(tabela_5.loc[indices_interpolados - 1, "NDU"]/252))*pow(pow((1+tabela_5.loc[indices_interpolados + 1, "Taxa de fechamento"]/100),(tabela_5.loc[indices_interpolados + 1, "NDU"]/252))/pow((1+tabela_5.loc[indices_interpolados - 1, "Taxa de fechamento"]/100),(tabela_5.loc[indices_interpolados - 1, "NDU"]/252)),((tabela_5.loc[indices_interpolados, "NDU"]-tabela_5.loc[indices_interpolados - 1, "NDU"])/(tabela_5.loc[indices_interpolados + 1, "NDU"]-tabela_5.loc[indices_interpolados - 1, "NDU"]))),(252/tabela_5.loc[indices_interpolados, "NDU"]))-1)*100
-        dataframe.loc[indices_interpolados, coluna] = taxa
+# Calculating a interpolated rate on Copom days:
+table_5["Closement rates"] = table_5["Closement rates"].fillna(0)
+interpolation_indexes = table_5.index[table_5["Closement rates"].eq(0)].tolist()
+
+# Function to calculate interpolated rates on Copom reunion days. The interpolation used was Flat Forward 252
+def interpolated_rates(dataframe, indexes, column):
+    for interpolated_indexes in indexes:
+        rate = (pow(pow((1 + table_5.loc[interpolated_indexes - 1, "Closement rates"]/100),(table_5.loc[interpolated_indexes - 1, "NDU"]/252))*pow(pow((1+table_5.loc[interpolated_indexes + 1, "Closement rates"]/100),(table_5.loc[interpolated_indexes + 1, "NDU"]/252))/pow((1+table_5.loc[interpolated_indexes - 1, "Closement rates"]/100),(table_5.loc[interpolated_indexes - 1, "NDU"]/252)),((table_5.loc[interpolated_indexes, "NDU"]-table_5.loc[interpolated_indexes - 1, "NDU"])/(table_5.loc[interpolated_indexes + 1, "NDU"]-table_5.loc[interpolated_indexes - 1, "NDU"]))),(252/table_5.loc[interpolated_indexes, "NDU"]))-1)*100
+        dataframe.loc[interpolated_indexes, column] = rate
     return dataframe
 
-tabela_5 = taxa_interpolada(tabela_5, indices_interpolacao, "Taxa de fechamento")
-tabela_5 = tabela_5.sort_values(by="Datas").reset_index(drop=True)
+table_5 = interpolated_rates(table_5, interpolation_indexes, "Closement rates")
+table_5 = table_5.sort_values(by="Dates").reset_index(drop=True)
 
-#Definição das taxas a termo da curva:
-def taxa_termo(linha):
-    if linha.name == 0:
-        return taxa_selic_over
-    return (pow(pow((1+tabela_5.loc[linha.name, "Taxa de fechamento"]/100),(tabela_5.loc[linha.name, "NDU"]/252))/pow((1+tabela_5.loc[linha.name - 1, "Taxa de fechamento"]/100),(tabela_5.loc[linha.name - 1, "NDU"]/252)),(252/(tabela_5.loc[linha.name, "NDU"] - tabela_5.loc[linha.name - 1, "NDU"]))) - 1)*100
+# Removing the DI contract with the lowest maturity one day before its settlement. Reason: within two days before the maturity the contract lose
+# its usage in the market as a hedge or speculation, for example. Additionally, it creates a wrong forward rate calculation in this code
+removed_DI_contract = table_5.index[table_5["NDU"].eq(1)].tolist()
+table_5 = table_5.drop(max(removed_DI_contract))
+table_5 = table_5.sort_values(by="Dates").reset_index(drop=True)
 
-tabela_5["Taxa termo"] = tabela_5.apply(taxa_termo, axis=1)
+# Definition of forward rates:
+def forward_rate(row):
+    if row.name == 0:
+        return selic_over_rate
+    return (pow(pow((1+table_5.loc[row.name, "Closement rates"]/100),(table_5.loc[row.name, "NDU"]/252))/pow((1+table_5.loc[row.name - 1, "Closement rates"]/100),(table_5.loc[row.name - 1, "NDU"]/252)),(252/(table_5.loc[row.name, "NDU"] - table_5.loc[row.name - 1, "NDU"]))) - 1)*100
 
-#Calculo da variação da taxa a termo em cada trecho da curva
-def variacao_termo(linha):
-    if linha.name == 0:
+table_5["Forward rate"] = table_5.apply(forward_rate, axis=1)
+
+# Calculating the forward rate variation in each term:
+def forward_variation(row):
+    if row.name == 0:
         return 0
-    return round((tabela_5.loc[linha.name, "Taxa termo"] - tabela_5.loc[linha.name - 1, "Taxa termo"])*100,2)
+    return round((table_5.loc[row.name, "Forward rate"] - table_5.loc[row.name - 1, "Forward rate"])*100,2)
 
-tabela_5["Variacao termo"] = tabela_5.apply(variacao_termo, axis=1)
- 
-#Criacao da precificacao consolidada por reuniao do Copom:
+table_5["Forward variation"] = table_5.apply(forward_variation, axis=1)
 
-#Criar grupos com base nas linhas onde "Copom" aparece
-tabela_5['Grupo'] = (tabela_5['Eventos'] == 'Copom').cumsum()
+# Creation of consolidated Copom pricing per reunion:
 
-# Calcular a soma somente entre as linhas dentro de cada grupo
-tabela_5['Precificacao Copom'] = tabela_5.groupby('Grupo')['Variacao termo'].transform('sum')
+# Create groups based on "Copom lines"
+table_5['Group'] = (table_5['Events'] == 'Copom').cumsum()
 
-#Criação de dashboard para CDIE
-bps_copom = tabela_5.loc[tabela_5['Eventos'] == "Copom", "Precificacao Copom"].tolist()
+# Sum only the lines between each group
+table_5['Copom Pricing'] = table_5.groupby('Group')['Forward variation'].transform('sum')
+
+# CDIE Dashboard
+bps_copom = table_5.loc[table_5['Events'] == "Copom", "Copom Pricing"].tolist()
 bps_copom.pop(-1)
-ultimo_copom_index = tabela_5[tabela_5["Eventos"] == "Copom"].index[-1]
-ultimo_copom = tabela_5.loc[ultimo_copom_index, "Variacao termo"].tolist()
-bps_copom.extend([ultimo_copom])
-datas_copom_lista = tabela_5.loc[tabela_5['Eventos'] == "Copom", "Datas"].tolist()
-datas_copom_lista_formatada = [data.strftime("%b-%Y") for data in datas_copom_lista]
+last_copom_index = table_5[table_5["Events"] == "Copom"].index[-1]
+last_copom = table_5.loc[last_copom_index, "Forward variation"].tolist()
+bps_copom.extend([last_copom])
+dates_copom_list = table_5.loc[table_5['Events'] == "Copom", "Dates"].tolist()
+dates_copom_list_formatted = [date.strftime("%b-%Y") for date in dates_copom_list]
 
-#Criação a partir de um gráfico de barras
+# Creating bar chart:
 fig, ax = plt.subplots()
 
-x = np.arange(len(datas_copom_lista_formatada))
+x = np.arange(len(dates_copom_list_formatted))
 ax.bar(x, bps_copom, width=0.8, align='center', color='black')    
-plt.xticks(x, datas_copom_lista_formatada, fontsize=7.5)
+plt.xticks(x, dates_copom_list_formatted, fontsize=7.5)
 plt.yticks(np.arange(0, max(bps_copom) + 25, 25))
 ax = plt.gca()
 ax.spines['top'].set_visible(False)
 ax.spines['right'].set_visible(False)
-#Adicionar título principal
+# Add main title
 plt.suptitle('CDIE', fontsize=16, fontweight='light', fontfamily='rockwell', x=0.135, y=0.9)
 
-#Adicionar subtítulo
-plt.title(f'COPOM Market Expectations, bps - Last: {data_fixa:%d-%m-%Y}', fontsize=12, fontweight='light', fontfamily='rockwell', x=0.36, y=1.05)
+# Add sub title
+plt.title(f'COPOM Market Expectations, bps - Last: {fix_date:%d-%m-%Y}', fontsize=12, fontweight='light', fontfamily='rockwell', x=0.36, y=1.05)
 
-#Ajustar layout para evitar sobreposição
+# Adjusting layout to avoid overlap
 plt.tight_layout(rect=[0, 0, 1, 0.95])
 ax.legend()
 
